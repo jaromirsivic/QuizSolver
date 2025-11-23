@@ -52,7 +52,7 @@ class QuizSolver:
             "Beta": StrategyB(quizsolver=self, name="Beta"),
             "NegativeBeta": StrategyB(quizsolver=self, name="NegativeBeta", is_negative=True),
         }
-        self._strategy_in_use: Strategy = self.strategies["Beta"]
+        self._strategy_in_use: Strategy = self.strategies["NegativeBeta"]
 
     # def plot(self):
     #     """

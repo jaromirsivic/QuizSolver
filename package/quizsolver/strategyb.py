@@ -23,6 +23,11 @@ class StrategyB(Strategy):
         self.latest_score: float = 0.0
         self.latest_max_score: float = 1.0
         self.window_size_delta: int = 0
+        # How many epochs are needed to measure each group
+        self._measurement_rounds: int = 3
+        # hit counters for group 1 and 2
+        self._hit_counter1: int = self._measurement_rounds
+        self._hit_counter2: int = self._measurement_rounds
         # Variables for charts
         self.figure_initialized: bool = False
         self.figure = None
@@ -35,21 +40,21 @@ class StrategyB(Strategy):
         """
         self.training_batch = []
         # Get all questions from the quiz solver
-        all_questions = list(self._quizsolver.questions.values())
-        len_all_questions = len(all_questions)
+        unsolved_questions = [q for q in self._quizsolver.questions.values() if not q.is_solved]
+        len_unsolved_questions = len(unsolved_questions)
         # If there are no questions, set training group to empty and return
-        if len_all_questions == 0:
+        if len_unsolved_questions == 0:
             return
         # Get min and max counter1 values across all questions
         min_counter1, _, max_counter1, _ = minmax(
-            all_questions,
+            unsolved_questions,
             key=lambda q: q.data[self.name]["most_probable_answer1"].data[self.name]["counter1"]
         )
         # Compute difference between min and max counter1
         min_max_counter_diff = max_counter1 - min_counter1
         # Determine minimum likelyhood based on counter difference
         if min_max_counter_diff < 2.5:
-            min_likelyhood = 0.5
+            min_likelyhood = 0.4
         elif min_max_counter_diff < 4.5:
             min_likelyhood = 0.3
         elif min_max_counter_diff < 8.5:
@@ -57,7 +62,7 @@ class StrategyB(Strategy):
         else:
             min_likelyhood = 0.1
         # Assign questions to training batch based on counter1
-        for question in all_questions:
+        for question in unsolved_questions:
             counter1 = question.data[self.name]["most_probable_answer1"].data[self.name]["counter1"]
             random_value = random.uniform(0, 1)
             likelyhood_in_training_batch = inverse_square_likelyhood(
@@ -67,9 +72,8 @@ class StrategyB(Strategy):
                 max_likelyhood=1.0,
                 value=counter1
             )
+            # Determine if question is included in training batch
             in_training_batch = random_value <= likelyhood_in_training_batch + epsilon
-            #question.data[self.name]["in_training_batch"] = in_training_batch
-            # Add question to result if it is in training batch
             if in_training_batch:
                 self.training_batch.append(question)
 
@@ -194,6 +198,7 @@ class StrategyB(Strategy):
             for answer in question.answers:
                 answer.data[self.name]["most_probable"] = answer.data[self.name]["most_probable2"]
             question.data[self.name]["most_probable_answer"] = question.data[self.name]["most_probable_answer2"]
+            self._hit_counter2 += 1
             return question.to_response_dict(strategy_name=self.name)
             # return question.to_response_dict(strategy_name=self.name,
             #                                  most_probable_key="most_probable2")
@@ -201,6 +206,7 @@ class StrategyB(Strategy):
             for answer in question.answers:
                 answer.data[self.name]["most_probable"] = answer.data[self.name]["most_probable1"]
             question.data[self.name]["most_probable_answer"] = question.data[self.name]["most_probable_answer1"]
+            self._hit_counter1 += 1
             return question.to_response_dict(strategy_name=self.name)
             # return question.to_response_dict(strategy_name=self.name,
             #                                  most_probable_key="most_probable1")
@@ -242,7 +248,7 @@ class StrategyB(Strategy):
             if answer.is_correct is None and answer != most_probable_answer1:
                 possible_answers.append(answer)
         # this should never happen        
-        if len(possible_answers) < 2:
+        if len(possible_answers) < 1:
             raise ValueError("No possible answers to select from in strategy Beta / NegativeBeta. "
                              "This should not happen.")
         # Select a new most probable answer randomly from possible answers
@@ -305,18 +311,17 @@ class StrategyB(Strategy):
         Update the moving average window size based on the current epoch.
         """
         epoch = self._quizsolver.epoch
-        ma0_window_size = 10
-        ma1_ma2_window_size = 5
+        ma0_window_size = 7
         if (epoch & (epoch - 1)) == 0 and \
             self._ma0 is not None and \
             self._ma1 is not None and \
             self._ma2 is not None:
             if self._ma0.window_size != ma0_window_size:
                 self._ma0.set_window_size(ma0_window_size)
-            if self._ma1.window_size != ma1_ma2_window_size:
-                self._ma1.set_window_size(ma1_ma2_window_size)
-            if self._ma2.window_size != ma1_ma2_window_size:
-                self._ma2.set_window_size(ma1_ma2_window_size)
+            if self._ma1.window_size != self._measurement_rounds:
+                self._ma1.set_window_size(self._measurement_rounds)
+            if self._ma2.window_size != self._measurement_rounds:
+                self._ma2.set_window_size(self._measurement_rounds)
             # window_size = self._quizsolver._calculate_moving_average_window_size() + 10
             # if self._ma0.window_size != window_size:
             #     self._ma0.set_window_size(window_size)
@@ -354,6 +359,13 @@ class StrategyB(Strategy):
         capturing_data = self._ma1.window_size + self._ma2.window_size + self.window_size_delta
         if self.epochs_used % capturing_data != 0:
             return
+        if not (self._hit_counter1 >= self._hit_counter2 >= (self._measurement_rounds // 2) + 1):
+            self._hit_counter1 = 0
+            self._hit_counter2 = 0
+            return
+        else:
+            self._hit_counter1 = 0
+            self._hit_counter2 = 0
         # Update moving average with current measurement
         ma1_median = self._ma1.median
         ma2_median = self._ma2.median
