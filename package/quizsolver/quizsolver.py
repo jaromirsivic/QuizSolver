@@ -52,7 +52,7 @@ class QuizSolver:
             "Beta": StrategyB(quizsolver=self, name="Beta"),
             "NegativeBeta": StrategyB(quizsolver=self, name="NegativeBeta", is_negative=True),
         }
-        self._strategy_in_use: Strategy = self.strategies["NegativeBeta"]
+        self._strategy_in_use: Strategy = self.strategies["Beta"]
 
     # def plot(self):
     #     """
@@ -234,13 +234,14 @@ class QuizSolver:
         result = "QuizSolver Statistics:\n"
         result +=f"  Epoch: {self.latest_result["epoch"]}\n"
         result += f"  Total Questions: {self.latest_result["total_questions"]}\n"
-        result += f"  Score: {self.latest_result["score"]:.5f} / {self.latest_result["max_score"]:.5f}\n"
+        result += f"  Latest Score %: {(self.latest_result["score"]/self.latest_result["max_score"]) * 100:.3f}% " \
+                  f"({self.latest_result["score"]:.5f} / {self.latest_result["max_score"]:.5f})\n"
         result += f"  All Questions Solved: {self.latest_result["all_questions_solved"]}\n\n"
         result += self.strategies["Winner"].print_statistics()+"\n"
         result += self.strategies["Looser"].print_statistics()+"\n"
-        #result += self.strategies["Alpha"].print_statistics()+"\n"
-        #result += self.strategies["NegativeAlpha"].print_statistics()+"\n"
-        #result += self.strategies["Beta"].print_statistics()+"\n"
+        result += self.strategies["Alpha"].print_statistics()+"\n"
+        result += self.strategies["NegativeAlpha"].print_statistics()+"\n"
+        result += self.strategies["Beta"].print_statistics()+"\n"
         result += self.strategies["NegativeBeta"].print_statistics()+"\n"
         try:
             self.console.clear()

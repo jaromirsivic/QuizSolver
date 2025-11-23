@@ -76,10 +76,8 @@ class StrategyW(Strategy):
         """
         Print statistics related to the strategy's performance.
         """
-        result = f"Strategy {self.name}:\n"
-        result += f"  Enabled: {self.enabled}\n"
-        result += f"  Epochs used: {self.epochs_used}\n"
-        result += f"  Win strike count: {self.win_strike_count}\n"
-        result += f"  Questions solved: {self.questions_solved}\n"
-        result += f"  Answers closed: {self.answers_closed}\n"
+        result = f'Strategy {self.name} ({"Enabled" if self.enabled else "Disabled"}):\n'
+        result += f'  Epochs used: {self.epochs_used}\n'
+        result += f'  Triggered / Questions Solved / Answ. Closed: ' \
+                  f'{self.win_strike_count} / {self.questions_solved} / {self.answers_closed}\n'
         return result

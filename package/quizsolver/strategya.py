@@ -206,6 +206,28 @@ class StrategyA(Strategy):
         """
         raise NotImplementedError("This method should be implemented by subclasses.")
     
+    # def print_statistics(self) -> str:
+    #     """
+    #     Print statistics related to the strategy's performance.
+    #     """
+    #     # return statistics
+    #     factor = self.latest_score / self.latest_max_score if self.latest_max_score > 0 else 0.0
+    #     window_size = self._ma.window_size if self._ma else 0
+    #     moving_average = self._ma.moving_average if self._ma else 0.0
+    #     result = f"Strategy {self.name}:\n"
+    #     result += f"  Enabled: {self.enabled}\n"
+    #     result += f"  Epochs used: {self.epochs_used}\n"
+    #     result += f"  MA Window Size: {window_size}\n"
+    #     result += f"  Moving Average: {moving_average * 100:,.3f}%\n"
+    #     result += f"  Latest Score% : {(self.latest_score/self.latest_max_score) * 100:.3f}% " \
+    #               f"({self.latest_score:.5f} / {self.latest_max_score:.5f})\n"
+    #     # draw progress bar
+    #     bar_length = 50
+    #     factor2 = factor
+    #     bar_used = int(factor2 * bar_length)
+    #     result += f"[" + "#" * bar_used + "-" * (bar_length - bar_used) + "]\n"
+    #     return result
+    
     def print_statistics(self) -> str:
         """
         Print statistics related to the strategy's performance.
@@ -214,13 +236,9 @@ class StrategyA(Strategy):
         factor = self.latest_score / self.latest_max_score if self.latest_max_score > 0 else 0.0
         window_size = self._ma.window_size if self._ma else 0
         moving_average = self._ma.moving_average if self._ma else 0.0
-        result = f"Strategy {self.name}:\n"
-        result += f"  Enabled: {self.enabled}\n"
-        result += f"  Epochs used: {self.epochs_used}\n"
-        result += f"  MA Window Size: {window_size}\n"
-        result += f"  Moving Average: {moving_average * 100:,.3f}%\n"
-        result += f"  Latest Score% : {(self.latest_score/self.latest_max_score) * 100:.3f}% " \
-                  f"({self.latest_score:.5f} / {self.latest_max_score:.5f})\n"
+        result = f'Strategy {self.name} ({"Enabled" if self.enabled else "Disabled"}):\n'
+        result += f'  Epochs used: {self.epochs_used}\n'
+        result += f'  Moving Average: {moving_average * 100:,.3f}% (Window Size={window_size})\n'
         # draw progress bar
         bar_length = 50
         factor2 = factor

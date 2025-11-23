@@ -70,6 +70,7 @@ class StrategyL(Strategy):
             if len(undecided_answers) == 0:
                 raise ValueError("All answers have been marked as incorrect, cannot proceed.")
             # If only one undecided answer remains, mark it as correct
+            # and mark question as solved
             if len(undecided_answers) == 1:
                 undecided_answers[0].is_correct = True
                 question.is_solved = True
@@ -89,10 +90,8 @@ class StrategyL(Strategy):
         """
         Print statistics related to the strategy's performance.
         """
-        result = f"Strategy {self.name}:\n"
-        result += f"  Enabled: {self.enabled}\n"
-        result += f"  Epochs used: {self.epochs_used}\n"
-        result += f"  Loose strike count: {self.loose_strike_count}\n"
-        result += f"  Questions solved: {self.questions_solved}\n"
-        result += f"  Answers closed: {self.answers_closed}\n"
+        result = f'Strategy {self.name} ({"Enabled" if self.enabled else "Disabled"}):\n'
+        result += f'  Epochs used: {self.epochs_used}\n'
+        result += f'  Triggered / Questions Solved / Answ. Closed: ' \
+                  f'{self.loose_strike_count} / {self.questions_solved} / {self.answers_closed}\n'
         return result

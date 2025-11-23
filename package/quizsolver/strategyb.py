@@ -1,5 +1,5 @@
 import random
-from .common import epsilon
+from .common import epsilon, inverse_square_likelyhood, minmax
 from .strategy import Strategy
 from .movingaverage import MovingAverage
 import matplotlib.pyplot as plt
@@ -16,7 +16,9 @@ class StrategyB(Strategy):
         self._ma0: MovingAverage | None = None
         self._ma1: MovingAverage | None = None
         self._ma2: MovingAverage | None = None
-        self.training_group: list['Question'] = []
+        # self.training_group: list['Question'] = []
+        self.training_batch: list['Question'] = []
+        self.training_minibatch: list['Question'] = []
         self.is_negative = is_negative
         self.latest_score: float = 0.0
         self.latest_max_score: float = 1.0
@@ -27,66 +29,130 @@ class StrategyB(Strategy):
         self.axes: list = []
         self.axes_data: list = []
 
-    def pick_training_group(self):
+    def pick_training_batch(self):
         """
-        Pick a training group of questions for the current quiz.
+        Pick a training batch of questions for the current quiz.
         """
+        self.training_batch = []
         # Get all questions from the quiz solver
         all_questions = list(self._quizsolver.questions.values())
         len_all_questions = len(all_questions)
         # If there are no questions, set training group to empty and return
         if len_all_questions == 0:
-            self.training_group = []
             return
-        if self._ma0 is None:
-            raise ValueError("Moving average not initialized.")
-        
-        #k = max(1, int(len_all_questions * 0.1))
-        if random.random() < 1.0:
-            all_questions_sorted = sorted(
-                all_questions,
-                key=lambda q: q.data[self.name]["selected_for_measurement_counter"]
-            )
-            first_question = all_questions_sorted[0]
-            last_question = all_questions_sorted[-1]
-            k = len_all_questions
-            if first_question.data[self.name]["selected_for_measurement_counter"] != \
-            last_question.data[self.name]["selected_for_measurement_counter"]:
-                for i in range(len_all_questions - 1, -1, -1):
-                    question = all_questions_sorted[i]
-                    if question.data[self.name]["selected_for_measurement_counter"] != \
-                    last_question.data[self.name]["selected_for_measurement_counter"]:
-                        k = i + 1
-                        break
-            all_questions_sorted = all_questions_sorted[:k]
-            len_all_questions_sorted = len(all_questions_sorted)
-            # Pick questions randomly for the training group
-            questions_to_pick = min(max(1, int(0.0001 * len_all_questions)), len_all_questions_sorted)
-            questions_to_pick = min(max(1, int((1 - self._ma0.moving_average) * questions_to_pick)), len_all_questions_sorted)
-            self.training_group = random.sample(all_questions_sorted[:k], questions_to_pick)
+        # Get min and max counter1 values across all questions
+        min_counter1, _, max_counter1, _ = minmax(
+            all_questions,
+            key=lambda q: q.data[self.name]["most_probable_answer1"].data[self.name]["counter1"]
+        )
+        # Compute difference between min and max counter1
+        min_max_counter_diff = max_counter1 - min_counter1
+        # Determine minimum likelyhood based on counter difference
+        if min_max_counter_diff < 2.5:
+            min_likelyhood = 0.5
+        elif min_max_counter_diff < 4.5:
+            min_likelyhood = 0.3
+        elif min_max_counter_diff < 8.5:
+            min_likelyhood = 0.2
         else:
-            all_questions = [_ for _ in all_questions if not _.is_solved]
-            random.shuffle(all_questions)
-            all_questions_sorted = sorted(
-                all_questions,
-                key=lambda q: q.data[self.name]["most_probable_answer1"].data[self.name]["counter1"]
+            min_likelyhood = 0.1
+        # Assign questions to training batch based on counter1
+        for question in all_questions:
+            counter1 = question.data[self.name]["most_probable_answer1"].data[self.name]["counter1"]
+            random_value = random.uniform(0, 1)
+            likelyhood_in_training_batch = inverse_square_likelyhood(
+                min=min_counter1,
+                max=max_counter1,
+                min_likelyhood=min_likelyhood,
+                max_likelyhood=1.0,
+                value=counter1
             )
-            len_all_questions_sorted = len(all_questions_sorted)
-            questions_to_pick = min(max(1, int(0.1 * len_all_questions)), len_all_questions_sorted)
-            # all_questions_sorted = sorted(
-            #     all_questions_sorted,
-            #     key=lambda q: q.data[self.name]["most_probable_answer1"].data[self.name]["counter1"]
-            # )
-            self.training_group = all_questions_sorted[:questions_to_pick]
+            in_training_batch = random_value <= likelyhood_in_training_batch + epsilon
+            #question.data[self.name]["in_training_batch"] = in_training_batch
+            # Add question to result if it is in training batch
+            if in_training_batch:
+                self.training_batch.append(question)
 
-            # random.shuffle(all_questions_sorted)
-            # all_questions_sorted = sorted(
-            #     all_questions_sorted,
-            #     key=lambda q: q.data[self.name]["most_probable_answer1"].data[self.name]["counter1"]
-            # )
-            # self.training_group = all_questions_sorted[:questions_to_pick]
-        for question in self.training_group:
-            question.data[self.name]["selected_for_measurement_counter"] += 1
+    def pick_training_minibatch(self, *, how_many_to_pick: int | None = None):
+        # Reset training batch if empty
+        if len(self.training_batch) == 0:
+            self.pick_training_batch()
+        # Pick random questions from training batch and store them in training minibatch
+        self.training_minibatch = random.sample(
+            self.training_batch,
+            k=min(how_many_to_pick if how_many_to_pick is not None else 1,
+                  len(self.training_batch))
+        )
+        # Remove selected questions from training batch
+        questions_to_remove = []
+        for question in self.training_batch:
+            if question in self.training_minibatch:
+                questions_to_remove.append(question)
+        for question in questions_to_remove:
+            self.training_batch.remove(question)
+        
+
+
+    # def pick_training_group(self):
+    #     """
+    #     Pick a training group of questions for the current quiz.
+    #     """
+    #     # Get all questions from the quiz solver
+    #     all_questions = list(self._quizsolver.questions.values())
+    #     len_all_questions = len(all_questions)
+    #     # If there are no questions, set training group to empty and return
+    #     if len_all_questions == 0:
+    #         self.training_group = []
+    #         return
+    #     if self._ma0 is None:
+    #         raise ValueError("Moving average not initialized.")
+        
+    #     #k = max(1, int(len_all_questions * 0.1))
+    #     if random.random() < 1.0:
+    #         all_questions_sorted = sorted(
+    #             all_questions,
+    #             key=lambda q: q.data[self.name]["selected_for_measurement_counter"]
+    #         )
+    #         first_question = all_questions_sorted[0]
+    #         last_question = all_questions_sorted[-1]
+    #         k = len_all_questions
+    #         if first_question.data[self.name]["selected_for_measurement_counter"] != \
+    #         last_question.data[self.name]["selected_for_measurement_counter"]:
+    #             for i in range(len_all_questions - 1, -1, -1):
+    #                 question = all_questions_sorted[i]
+    #                 if question.data[self.name]["selected_for_measurement_counter"] != \
+    #                 last_question.data[self.name]["selected_for_measurement_counter"]:
+    #                     k = i + 1
+    #                     break
+    #         all_questions_sorted = all_questions_sorted[:k]
+    #         len_all_questions_sorted = len(all_questions_sorted)
+    #         # Pick questions randomly for the training group
+    #         questions_to_pick = min(max(1, int(0.0001 * len_all_questions)), len_all_questions_sorted)
+    #         questions_to_pick = min(max(1, int((1 - self._ma0.moving_average) * questions_to_pick)), len_all_questions_sorted)
+    #         self.training_group = random.sample(all_questions_sorted[:k], questions_to_pick)
+    #     else:
+    #         all_questions = [_ for _ in all_questions if not _.is_solved]
+    #         random.shuffle(all_questions)
+    #         all_questions_sorted = sorted(
+    #             all_questions,
+    #             key=lambda q: q.data[self.name]["most_probable_answer1"].data[self.name]["counter1"]
+    #         )
+    #         len_all_questions_sorted = len(all_questions_sorted)
+    #         questions_to_pick = min(max(1, int(0.1 * len_all_questions)), len_all_questions_sorted)
+    #         # all_questions_sorted = sorted(
+    #         #     all_questions_sorted,
+    #         #     key=lambda q: q.data[self.name]["most_probable_answer1"].data[self.name]["counter1"]
+    #         # )
+    #         self.training_group = all_questions_sorted[:questions_to_pick]
+
+    #         # random.shuffle(all_questions_sorted)
+    #         # all_questions_sorted = sorted(
+    #         #     all_questions_sorted,
+    #         #     key=lambda q: q.data[self.name]["most_probable_answer1"].data[self.name]["counter1"]
+    #         # )
+    #         # self.training_group = all_questions_sorted[:questions_to_pick]
+    #     for question in self.training_group:
+    #         question.data[self.name]["selected_for_measurement_counter"] += 1
 
     def initialize_question(self, *, question: 'Question'):
         """
@@ -113,6 +179,7 @@ class StrategyB(Strategy):
         # Store most probable answer in question data
         question.data[self.name] = {
             "selected_for_measurement_counter": 0,
+            "most_probable_answer": question.answers[random_index1],
             "most_probable_answer1": question.answers[random_index1],
             "most_probable_answer2": question.answers[random_index2]
         }
@@ -123,15 +190,17 @@ class StrategyB(Strategy):
         Args:
             question (Question): The question to process.
         """
-        if self.epochs_used % 2 == 1 and question in self.training_group:
+        if self.epochs_used % 2 == 1 and question in self.training_minibatch:
             for answer in question.answers:
                 answer.data[self.name]["most_probable"] = answer.data[self.name]["most_probable2"]
+            question.data[self.name]["most_probable_answer"] = question.data[self.name]["most_probable_answer2"]
             return question.to_response_dict(strategy_name=self.name)
             # return question.to_response_dict(strategy_name=self.name,
             #                                  most_probable_key="most_probable2")
         else:
             for answer in question.answers:
                 answer.data[self.name]["most_probable"] = answer.data[self.name]["most_probable1"]
+            question.data[self.name]["most_probable_answer"] = question.data[self.name]["most_probable_answer1"]
             return question.to_response_dict(strategy_name=self.name)
             # return question.to_response_dict(strategy_name=self.name,
             #                                  most_probable_key="most_probable1")
@@ -293,7 +362,7 @@ class StrategyB(Strategy):
         self._ma0.add_value(ma1_median)
         threshold = self._ma0.moving_average
         # train answer probabilities
-        for question in self.training_group:
+        for question in self.training_minibatch:
             # If question is already solved then continue
             if question.is_solved:
                 continue
@@ -381,7 +450,8 @@ class StrategyB(Strategy):
                     self.increase_counter(question, group_index="2")
                     self.increase_counter(question, group_index="1")
         self.finished_measurements += 1
-        self.pick_training_group()
+        self.pick_training_minibatch(how_many_to_pick = 1)
+        #self.pick_training_group()
         # if self.finished_measurements % 100 == 0:
         #     self.plot()
     
@@ -485,6 +555,29 @@ class StrategyB(Strategy):
         plt.pause(0.1)
         
     
+    # def print_statistics(self) -> str:
+    #     """
+    #     Print statistics related to the strategy's performance.
+    #     """
+    #     # return statistics
+    #     factor = self.latest_score / self.latest_max_score if self.latest_max_score > 0 else 0.0
+    #     window_size = self._ma0.window_size if self._ma0 else 0
+    #     moving_average = self._ma0.moving_average if self._ma0 else 0.0
+    #     result = f"Strategy {self.name}:\n"
+    #     result += f"  Enabled: {self.enabled}\n"
+    #     result += f"  Epochs used: {self.epochs_used}\n"
+    #     result += f"  Finished Measurements: {self.finished_measurements}\n"
+    #     result += f"  MA Window Size: {window_size}\n"
+    #     result += f"  Moving Average: {moving_average * 100:,.3f}%\n"
+    #     result += f"  Latest Score% : {(self.latest_score/self.latest_max_score) * 100:.3f}% " \
+    #               f"({self.latest_score:.5f} / {self.latest_max_score:.5f})\n"
+    #     # draw progress bar
+    #     bar_length = 50
+    #     factor2 = factor
+    #     bar_used = int(factor2 * bar_length)
+    #     result += f"[" + "#" * bar_used + "-" * (bar_length - bar_used) + "]\n"
+    #     return result
+    
     def print_statistics(self) -> str:
         """
         Print statistics related to the strategy's performance.
@@ -493,14 +586,9 @@ class StrategyB(Strategy):
         factor = self.latest_score / self.latest_max_score if self.latest_max_score > 0 else 0.0
         window_size = self._ma0.window_size if self._ma0 else 0
         moving_average = self._ma0.moving_average if self._ma0 else 0.0
-        result = f"Strategy {self.name}:\n"
-        result += f"  Enabled: {self.enabled}\n"
-        result += f"  Epochs used: {self.epochs_used}\n"
-        result += f"  Finished Measurements: {self.finished_measurements}\n"
-        result += f"  MA Window Size: {window_size}\n"
-        result += f"  Moving Average: {moving_average * 100:,.3f}%\n"
-        result += f"  Latest Score% : {(self.latest_score/self.latest_max_score) * 100:.3f}% " \
-                  f"({self.latest_score:.5f} / {self.latest_max_score:.5f})\n"
+        result = f'Strategy {self.name} ({"Enabled" if self.enabled else "Disabled"}):\n'
+        result += f'  Measurements Finished / Epochs used: {self.finished_measurements} / {self.epochs_used}\n'
+        result += f'  Moving Average: {moving_average * 100:,.3f}% (Window Size={window_size})\n'
         # draw progress bar
         bar_length = 50
         factor2 = factor
