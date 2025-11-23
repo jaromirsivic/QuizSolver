@@ -45,3 +45,11 @@ class Strategy:
         Print statistics related to the strategy's performance.
         """
         raise NotImplementedError("This method should be implemented by subclasses.")
+    
+    def get_progress(self) -> float:
+        """
+        Get the current progress of the strategy.
+        Returns:
+            float: A value between 0.0 and 1.0 indicating progress.
+        """
+        raise NotImplementedError("This method should be implemented by subclasses.")

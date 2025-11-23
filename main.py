@@ -11,7 +11,8 @@ def run_quizsolver():
     args = parser.parse_args()
 
     quiz_setup = QuizSolverSetup()
-    quiz_generator = QuizGenerator(questions_count=200, 
+    quiz_setup.moving_average_window_size_override = 100
+    quiz_generator = QuizGenerator(questions_count=50, 
                                    min_answers_per_question=4, 
                                    max_answers_per_question=4,
                                    probability_of_choose_one_type=1.0,
@@ -25,7 +26,7 @@ def run_quizsolver():
     quiz_solved: dict = {"finished": False}
 
     while not quiz_solved["finished"]:
-        quiz_questions_multiplier = 0.95
+        quiz_questions_multiplier = 1.0
         quiz_questions_count = max(1, int(quiz_questions_multiplier * quiz_generator.questions_count))   
         quiz = quiz_generator.generate_quiz(num_questions=quiz_questions_count)
         #quiz_raw_questions = list(question["question"] for question in quiz["questions"])

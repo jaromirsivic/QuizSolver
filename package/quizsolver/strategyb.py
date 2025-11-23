@@ -311,13 +311,16 @@ class StrategyB(Strategy):
         Update the moving average window size based on the current epoch.
         """
         epoch = self._quizsolver.epoch
-        ma0_window_size = 7
+        if self._quizsolver.quiz_setup.moving_average_window_size_override is not None:
+            window_size = self._quizsolver.quiz_setup.moving_average_window_size_override
+        else:
+            window_size = 7
         if (epoch & (epoch - 1)) == 0 and \
             self._ma0 is not None and \
             self._ma1 is not None and \
             self._ma2 is not None:
-            if self._ma0.window_size != ma0_window_size:
-                self._ma0.set_window_size(ma0_window_size)
+            if self._ma0.window_size != window_size:
+                self._ma0.set_window_size(window_size)
             if self._ma1.window_size != self._measurement_rounds:
                 self._ma1.set_window_size(self._measurement_rounds)
             if self._ma2.window_size != self._measurement_rounds:
@@ -466,6 +469,19 @@ class StrategyB(Strategy):
         #self.pick_training_group()
         # if self.finished_measurements % 100 == 0:
         #     self.plot()
+
+    def get_progress(self) -> float:
+        """
+        Get the current progress of the strategy based on the moving average.
+        Returns:
+            float: The current progress as a float between 0.0 and 1.0.
+        """
+        if self._ma0 is None:
+            return 0.0
+        if not self.is_negative:
+            return self._ma0.moving_average
+        else:
+            return 1.0 - self._ma0.moving_average
     
     def plot(self):
         """
@@ -513,7 +529,7 @@ class StrategyB(Strategy):
         for question in questions:
             if answers_count >= max_answers:
                 break
-            is_in_training_group = question in self.training_group
+            is_in_training_group = question in self.training_minibatch
             for answer in question.answers:
                 if answers_count >= max_answers:
                     break
@@ -595,7 +611,7 @@ class StrategyB(Strategy):
         Print statistics related to the strategy's performance.
         """
         # return statistics
-        factor = self.latest_score / self.latest_max_score if self.latest_max_score > 0 else 0.0
+        #factor = self.latest_score / self.latest_max_score if self.latest_max_score > 0 else 0.0
         window_size = self._ma0.window_size if self._ma0 else 0
         moving_average = self._ma0.moving_average if self._ma0 else 0.0
         result = f'Strategy {self.name} ({"Enabled" if self.enabled else "Disabled"}):\n'
@@ -603,7 +619,6 @@ class StrategyB(Strategy):
         result += f'  Moving Average: {moving_average * 100:,.3f}% (Window Size={window_size})\n'
         # draw progress bar
         bar_length = 50
-        factor2 = factor
-        bar_used = int(factor2 * bar_length)
+        bar_used = int(self.get_progress() * bar_length)
         result += f"[" + "#" * bar_used + "-" * (bar_length - bar_used) + "]\n"
         return result

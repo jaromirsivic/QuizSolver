@@ -1,5 +1,5 @@
 import random
-from .common import epsilon
+from .common import epsilon, minmax, inverse_square_likelyhood
 from .strategy import Strategy
 from .movingaverage import MovingAverage
 from typing import TYPE_CHECKING
@@ -93,8 +93,14 @@ class StrategyA(Strategy):
         Update the moving average window size based on the current epoch.
         """
         epoch = self._quizsolver.epoch
+        # Update window size at powers of two epochs
         if (epoch & (epoch - 1)) == 0 and self._ma is not None:
-            window_size = self._quizsolver._calculate_moving_average_window_size() + 5
+            # Determine window size
+            if self._quizsolver.quiz_setup.moving_average_window_size_override is not None:
+                window_size = self._quizsolver.quiz_setup.moving_average_window_size_override
+            else:
+                window_size = self._quizsolver._calculate_moving_average_window_size() + 5
+            # Update moving average window size if different
             if self._ma.window_size != window_size:
                 self._ma.set_window_size(window_size)
 
@@ -126,30 +132,74 @@ class StrategyA(Strategy):
     #         most_probable_answer: Answer = question.data[self.name]["most_probable_answer"]
     #         most_probable_answer.data[self.name]["counter"] -= delta
 
-    def _shuffle_sort(self, questions):
+    # def _shuffle_sort(self, questions):
+    #     """
+    #     Shuffle and sort questions based on most probable answer probability.
+    #     Args:
+    #         questions (list of Question): The list of questions to process.
+    #     Returns:
+    #         list of Question: The shuffled and sorted list of questions.
+    #     """
+    #     random.shuffle(questions)
+    #     sorted_questions = sorted(
+    #         questions,
+    #         key=lambda q: q.data[self.name]["most_probable_answer"].data[self.name]["counter"]
+    #     )
+    #     return sorted_questions
+
+    # def compute_k_split(self) -> int:
+    #     total_questions = len(self._quizsolver.questions)
+    #     quiz_questions = len(self._quizsolver._latest_quiz)
+    #     quiz_multiplier = quiz_questions / total_questions
+    #     rand_gaussian = min(1, max(-1, random.gauss(mu=0.0, sigma=0.15)))
+    #     quiz_multiplier += rand_gaussian * quiz_multiplier
+    #     k = min(max(1, int((1 - quiz_multiplier) * quiz_questions)) + random.randint(-2, 2), quiz_questions)
+    #     return k
+
+    def get_questions_to_train(self) -> list['Question']:
         """
-        Shuffle and sort questions based on most probable answer probability.
-        Args:
-            questions (list of Question): The list of questions to process.
+        Determine which questions from the latest quiz should be included in the training batch.
         Returns:
-            list of Question: The shuffled and sorted list of questions.
+            list of Question: The list of questions to include in the training batch.
         """
-        random.shuffle(questions)
-        sorted_questions = sorted(
-            questions,
+        # If there are no questions, return empty list
+        len_all_questions = len(self._quizsolver.questions)
+        if len_all_questions == 0:
+            return []
+        # Get questions from latest quiz
+        questions_in_latest_quiz = self._quizsolver._latest_quiz
+        len_questions_in_latest_quiz = len(questions_in_latest_quiz)
+        # Find min and max counter among most probable answers in latest quiz
+        min_counter, _, max_counter, _ = minmax(
+            questions_in_latest_quiz,
             key=lambda q: q.data[self.name]["most_probable_answer"].data[self.name]["counter"]
         )
-        return sorted_questions
-
-    def compute_k_split(self) -> int:
-        total_questions = len(self._quizsolver.questions)
-        quiz_questions = len(self._quizsolver._latest_quiz)
-        quiz_multiplier = quiz_questions / total_questions
-        rand_gaussian = min(1, max(-1, random.gauss(mu=0.0, sigma=0.15)))
-        quiz_multiplier += rand_gaussian * quiz_multiplier
-        k = min(max(1, int((1 - quiz_multiplier) * quiz_questions)) + random.randint(-2, 2), quiz_questions)
-        return k
-
+        # Compute minimum likelyhood based on proportion of questions in latest quiz compared to all questions
+        #min_likelyhood = min(max(0.3, 1 - (len_questions_in_latest_quiz / len_all_questions)), 1.0)
+        #min_likelyhood = min_likelyhood ** 2
+        progress = self.get_progress()
+        min_likelyhood = min(max(0.3, 1 - progress), 1.0)
+        #min_likelyhood = min_likelyhood ** 2 
+        min_likelyhood = 1.0
+        # Prepare result list
+        result = []
+        # Assign questions to training batch based on counter
+        for question in questions_in_latest_quiz:
+            counter = question.data[self.name]["most_probable_answer"].data[self.name]["counter"]
+            random_value = random.uniform(0, 1)
+            likelyhood_in_training_batch = inverse_square_likelyhood(
+                min=min_counter,
+                max=max_counter,
+                min_likelyhood=min_likelyhood,
+                max_likelyhood=1.0,
+                value=counter
+            )
+            # Determine if question is included in the training batch
+            in_training_batch = random_value <= likelyhood_in_training_batch + epsilon
+            if in_training_batch:
+                result.append(question)
+        return result
+    
     def process_quiz_feedback(self, *, score: float, max_score: float):
         """
         Process feedback after a quiz has been submitted and scored.
@@ -162,8 +212,6 @@ class StrategyA(Strategy):
         # store latest score and max score
         self.latest_score = score
         self.latest_max_score = max_score
-        # normalize counters across all questions
-        #self.normalize_counters_across_all_questions()
         # Initialize and update moving average
         self._initialize_moving_average()
         if self._ma is None:
@@ -172,13 +220,10 @@ class StrategyA(Strategy):
         # Update moving average with current factor
         self._ma.add_value(factor)
         # shuffle sorted latest quiz questions
-        sorted_latest_quiz = self._quizsolver._latest_quiz
-        # sorted_latest_quiz = self._shuffle_sort(self._quizsolver._latest_quiz)
-        # k = self.compute_k_split()
-        # if random.random() < 1.0:
-        #     sorted_latest_quiz = sorted_latest_quiz[:k]
+        questions_to_train = self._quizsolver._latest_quiz
+        #questions_to_train = self.get_questions_to_train()
         # train answer probabilities
-        for question in sorted_latest_quiz:
+        for question in questions_to_train:
             # If question is already solved then continue
             if question.is_solved:
                 continue
@@ -199,6 +244,18 @@ class StrategyA(Strategy):
                 if most_probable_answer.data[self.name]["counter"] <= epsilon:
                     self._change_most_probable_answer(question)
 
+    def get_progress(self) -> float:
+        """
+        Get the current progress of the strategy based on the moving average.
+        Returns:
+            float: The current progress as a float between 0.0 and 1.0.
+        """
+        if self._ma is None:
+            return 0.0
+        if not self.is_negative:
+            return self._ma.moving_average
+        else:
+            return 1.0 - self._ma.moving_average
     
     def plot(self):
         """
@@ -206,34 +263,12 @@ class StrategyA(Strategy):
         """
         raise NotImplementedError("This method should be implemented by subclasses.")
     
-    # def print_statistics(self) -> str:
-    #     """
-    #     Print statistics related to the strategy's performance.
-    #     """
-    #     # return statistics
-    #     factor = self.latest_score / self.latest_max_score if self.latest_max_score > 0 else 0.0
-    #     window_size = self._ma.window_size if self._ma else 0
-    #     moving_average = self._ma.moving_average if self._ma else 0.0
-    #     result = f"Strategy {self.name}:\n"
-    #     result += f"  Enabled: {self.enabled}\n"
-    #     result += f"  Epochs used: {self.epochs_used}\n"
-    #     result += f"  MA Window Size: {window_size}\n"
-    #     result += f"  Moving Average: {moving_average * 100:,.3f}%\n"
-    #     result += f"  Latest Score% : {(self.latest_score/self.latest_max_score) * 100:.3f}% " \
-    #               f"({self.latest_score:.5f} / {self.latest_max_score:.5f})\n"
-    #     # draw progress bar
-    #     bar_length = 50
-    #     factor2 = factor
-    #     bar_used = int(factor2 * bar_length)
-    #     result += f"[" + "#" * bar_used + "-" * (bar_length - bar_used) + "]\n"
-    #     return result
-    
     def print_statistics(self) -> str:
         """
         Print statistics related to the strategy's performance.
         """
         # return statistics
-        factor = self.latest_score / self.latest_max_score if self.latest_max_score > 0 else 0.0
+        #factor = self.latest_score / self.latest_max_score if self.latest_max_score > 0 else 0.0
         window_size = self._ma.window_size if self._ma else 0
         moving_average = self._ma.moving_average if self._ma else 0.0
         result = f'Strategy {self.name} ({"Enabled" if self.enabled else "Disabled"}):\n'
@@ -241,7 +276,6 @@ class StrategyA(Strategy):
         result += f'  Moving Average: {moving_average * 100:,.3f}% (Window Size={window_size})\n'
         # draw progress bar
         bar_length = 50
-        factor2 = factor
-        bar_used = int(factor2 * bar_length)
+        bar_used = int(self.get_progress() * bar_length)
         result += f"[" + "#" * bar_used + "-" * (bar_length - bar_used) + "]\n"
         return result
