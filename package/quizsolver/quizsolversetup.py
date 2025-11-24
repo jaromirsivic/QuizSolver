@@ -73,6 +73,22 @@ class QuizSolverSetup(dict):
         self["render_plots_interval"] = value
 
     @property
+    def preferred_strategy(self) -> str | None:
+        """
+        Get the preferred strategy for the quiz solver.
+        If set, this strategy will be used for all quizzes.
+        """
+        return self.get("preferred_strategy", None)
+    
+    @preferred_strategy.setter
+    def preferred_strategy(self, value: str | None):
+        """
+        Set the preferred strategy for the quiz solver.
+        If set, this strategy will be used for all quizzes.
+        """
+        self["preferred_strategy"] = value
+
+    @property
     def moving_average_window_size_override(self) -> int | None:
         """
         Get the moving average window size override if set.

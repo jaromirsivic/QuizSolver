@@ -1,4 +1,5 @@
 import random
+from matplotlib import pyplot as plt
 from .common import epsilon, minmax, inverse_square_likelyhood
 from .strategy import Strategy
 from .movingaverage import MovingAverage
@@ -15,6 +16,11 @@ class StrategyA(Strategy):
         self.is_negative = is_negative
         self.latest_score: float = 0.0
         self.latest_max_score: float = 1.0
+        # Variables for charts
+        self.figure_initialized: bool = False
+        self.figure = None
+        self.axes: list = []
+        self.axes_data: list = []
 
     def initialize_question(self, *, question: 'Question'):
         """
@@ -96,109 +102,57 @@ class StrategyA(Strategy):
         # Update window size at powers of two epochs
         if (epoch & (epoch - 1)) == 0 and self._ma is not None:
             # Determine window size
-            if self._quizsolver.quiz_setup.moving_average_window_size_override is not None:
-                window_size = self._quizsolver.quiz_setup.moving_average_window_size_override
+            if self._quizsolver.setup.moving_average_window_size_override is not None:
+                window_size = self._quizsolver.setup.moving_average_window_size_override
             else:
                 window_size = self._quizsolver._calculate_moving_average_window_size() + 5
             # Update moving average window size if different
             if self._ma.window_size != window_size:
                 self._ma.set_window_size(window_size)
 
-    # def compute_min_counter_across_all_questions(self) -> int:
+    # def get_questions_to_train(self) -> list['Question']:
     #     """
-    #     Compute the moving average of the most probable answer probabilities among all questions.
+    #     Determine which questions from the latest quiz should be included in the training batch.
     #     Returns:
-    #         float: The computed moving average.
+    #         list of Question: The list of questions to include in the training batch.
     #     """
-    #     min_counter = 65535
-    #     for question in self._quizsolver.questions.values():
-    #         most_probable_answer: Answer = question.data[self.name]["most_probable_answer"]
-    #         counter = most_probable_answer.data[self.name]["counter"]
-    #         if counter < min_counter:
-    #             min_counter = counter
-    #     if min_counter < 1:
-    #         raise ValueError("Minimum counter is less than 1, which should not happen.")
-    #     return min_counter
-    
-    # def normalize_counters_across_all_questions(self):
-    #     """
-    #     Normalize the counters of the most probable answers across all questions.
-    #     """
-    #     min_counter = self.compute_min_counter_across_all_questions()
-    #     if min_counter <= 1:
-    #         return
-    #     delta = min_counter - 1
-    #     for question in self._quizsolver.questions.values():
-    #         most_probable_answer: Answer = question.data[self.name]["most_probable_answer"]
-    #         most_probable_answer.data[self.name]["counter"] -= delta
-
-    # def _shuffle_sort(self, questions):
-    #     """
-    #     Shuffle and sort questions based on most probable answer probability.
-    #     Args:
-    #         questions (list of Question): The list of questions to process.
-    #     Returns:
-    #         list of Question: The shuffled and sorted list of questions.
-    #     """
-    #     random.shuffle(questions)
-    #     sorted_questions = sorted(
-    #         questions,
+    #     # If there are no questions, return empty list
+    #     len_all_questions = len(self._quizsolver.questions)
+    #     if len_all_questions == 0:
+    #         return []
+    #     # Get questions from latest quiz
+    #     questions_in_latest_quiz = self._quizsolver._latest_quiz
+    #     len_questions_in_latest_quiz = len(questions_in_latest_quiz)
+    #     # Find min and max counter among most probable answers in latest quiz
+    #     min_counter, _, max_counter, _ = minmax(
+    #         questions_in_latest_quiz,
     #         key=lambda q: q.data[self.name]["most_probable_answer"].data[self.name]["counter"]
     #     )
-    #     return sorted_questions
-
-    # def compute_k_split(self) -> int:
-    #     total_questions = len(self._quizsolver.questions)
-    #     quiz_questions = len(self._quizsolver._latest_quiz)
-    #     quiz_multiplier = quiz_questions / total_questions
-    #     rand_gaussian = min(1, max(-1, random.gauss(mu=0.0, sigma=0.15)))
-    #     quiz_multiplier += rand_gaussian * quiz_multiplier
-    #     k = min(max(1, int((1 - quiz_multiplier) * quiz_questions)) + random.randint(-2, 2), quiz_questions)
-    #     return k
-
-    def get_questions_to_train(self) -> list['Question']:
-        """
-        Determine which questions from the latest quiz should be included in the training batch.
-        Returns:
-            list of Question: The list of questions to include in the training batch.
-        """
-        # If there are no questions, return empty list
-        len_all_questions = len(self._quizsolver.questions)
-        if len_all_questions == 0:
-            return []
-        # Get questions from latest quiz
-        questions_in_latest_quiz = self._quizsolver._latest_quiz
-        len_questions_in_latest_quiz = len(questions_in_latest_quiz)
-        # Find min and max counter among most probable answers in latest quiz
-        min_counter, _, max_counter, _ = minmax(
-            questions_in_latest_quiz,
-            key=lambda q: q.data[self.name]["most_probable_answer"].data[self.name]["counter"]
-        )
-        # Compute minimum likelyhood based on proportion of questions in latest quiz compared to all questions
-        #min_likelyhood = min(max(0.3, 1 - (len_questions_in_latest_quiz / len_all_questions)), 1.0)
-        #min_likelyhood = min_likelyhood ** 2
-        progress = self.get_progress()
-        min_likelyhood = min(max(0.3, 1 - progress), 1.0)
-        #min_likelyhood = min_likelyhood ** 2 
-        min_likelyhood = 1.0
-        # Prepare result list
-        result = []
-        # Assign questions to training batch based on counter
-        for question in questions_in_latest_quiz:
-            counter = question.data[self.name]["most_probable_answer"].data[self.name]["counter"]
-            random_value = random.uniform(0, 1)
-            likelyhood_in_training_batch = inverse_square_likelyhood(
-                min=min_counter,
-                max=max_counter,
-                min_likelyhood=min_likelyhood,
-                max_likelyhood=1.0,
-                value=counter
-            )
-            # Determine if question is included in the training batch
-            in_training_batch = random_value <= likelyhood_in_training_batch + epsilon
-            if in_training_batch:
-                result.append(question)
-        return result
+    #     # Compute minimum likelyhood based on proportion of questions in latest quiz compared to all questions
+    #     #min_likelyhood = min(max(0.3, 1 - (len_questions_in_latest_quiz / len_all_questions)), 1.0)
+    #     #min_likelyhood = min_likelyhood ** 2
+    #     progress = self.get_progress()
+    #     min_likelyhood = min(max(0.3, 1 - progress), 1.0)
+    #     #min_likelyhood = min_likelyhood ** 2 
+    #     min_likelyhood = 1.0
+    #     # Prepare result list
+    #     result = []
+    #     # Assign questions to training batch based on counter
+    #     for question in questions_in_latest_quiz:
+    #         counter = question.data[self.name]["most_probable_answer"].data[self.name]["counter"]
+    #         random_value = random.uniform(0, 1)
+    #         likelyhood_in_training_batch = inverse_square_likelyhood(
+    #             min=min_counter,
+    #             max=max_counter,
+    #             min_likelyhood=min_likelyhood,
+    #             max_likelyhood=1.0,
+    #             value=counter
+    #         )
+    #         # Determine if question is included in the training batch
+    #         in_training_batch = random_value <= likelyhood_in_training_batch + epsilon
+    #         if in_training_batch:
+    #             result.append(question)
+    #     return result
     
     def process_quiz_feedback(self, *, score: float, max_score: float):
         """
@@ -259,9 +213,84 @@ class StrategyA(Strategy):
     
     def plot(self):
         """
-        Plot any relevant data for the strategy.
+        Create a plot composed of 5 subplots.
+        First subplot: Moving average and median of ma0 and moving average and median of ma1.
+        Second subplot: Probabilities of all first answers in questions "self.q"
+        Third subplot: Probabilities of all second answers in questions "self.q"
+        Fourth subplot: Probabilities of all third answers in questions "self.q"
+        Fifth subplot: Probabilities of all fourth answers in questions "self.q"
+        0.01 second pause to update the plot.
         """
-        raise NotImplementedError("This method should be implemented by subclasses.")
+        rows = 5
+        cols = 1
+        answers_per_row = 400
+        # Calculate maximum answers to plot
+        max_answers = rows * answers_per_row
+        # Initialize figure and axes if not already done
+        if not self.figure_initialized:
+            self.figure, self.axes = plt.subplots(rows, cols, figsize=(13, 5.5))
+            self.figure_initialized = True
+            # initialize axes data
+            for row in range(rows):
+                self.axes_data.append([])
+        # Check if moving averages are initialized
+        if self._ma is None:
+            return
+        # Clear and update first subplot
+        self.axes[0].clear()
+        self.axes[0].set_title(f'Strategy {self.name}. '
+                               f'Avg0: {self._ma.moving_average:.4f}')
+        self.axes[0].plot(self._ma.history_of_moving_averages, label='MA Moving Average', color='blue')
+        self.axes[0].legend()
+        
+        # Clear and update other subplots
+        for i in range(1, 5):
+            self.axes[i].clear()
+        # draw answers
+        colors = []
+        answers = []
+        answers_count = 0
+        questions = list(self._quizsolver.questions.values())
+        for question in questions:
+            # If the limit of answers to plot is reached, break
+            if answers_count >= max_answers:
+                break
+            for answer in question.answers:
+                # If the limit of answers to plot is reached, break
+                if answers_count >= max_answers:
+                    break
+                if answer.data[self.name]["counter"] > 0:
+                    colors.append('black')
+                    answers.append(answer.data[self.name]["counter"])
+                else:
+                    colors.append('lightgray')
+                    answers.append(0.5)
+            # increment answers count
+            answers_count += len(question.answers) + 4
+            colors.append('lightgray')
+            colors.append('lightgray')
+            colors.append('lightgray')
+            colors.append('lightgray')
+            answers.append(0)
+            answers.append(0)
+            answers.append(0)
+            answers.append(0)
+
+        if len(answers) < max_answers:
+            # pad answers and colors to max_answers
+            answers += [0] * (max_answers - len(answers))
+            colors += ['black'] * (max_answers - len(colors))
+
+        for i in range(1, 5):
+            # get data for this subplot
+            start_index = (i - 1) * answers_per_row
+            end_index = start_index + answers_per_row
+            data = answers[start_index:end_index]
+            color_data = colors[start_index:end_index]
+            self.axes[i].xaxis.set_visible(False)
+            self.axes[i].bar(range(len(data)), data, color=color_data, alpha=0.7)
+
+        plt.pause(0.01)
     
     def print_statistics(self) -> str:
         """

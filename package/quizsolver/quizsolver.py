@@ -1,9 +1,11 @@
+import datetime
 import random
 import json
 import matplotlib.pyplot as plt
 from dataclasses import dataclass
-from package.quizsolver.quizsolversetup import QuizSolverSetup
 from .common import epsilon
+from .quizsolversetup import QuizSolverSetup
+from .quizsolverstatistics import QuizSolverStatistics
 from .rawquestion import RawQuestion
 from .question import Question
 from .answer import Answer
@@ -17,9 +19,10 @@ from consoledraw import Console
 
 
 class QuizSolver:
-    def __init__(self, *, quiz_setup: QuizSolverSetup, strategy_in_use: str):
+    def __init__(self, *, setup: QuizSolverSetup, strategy_in_use: str):
         # Initialize the QuizSolver with the provided QuizSetup.
-        self.quiz_setup = quiz_setup
+        self.setup = setup
+        self.statistics = QuizSolverStatistics()
         self.console = Console(hideCursor=False)
         self.latest_result: dict = {}
         # Current epoch of the solving process.
@@ -27,10 +30,12 @@ class QuizSolver:
         # Initialize main question dictionary and moving average tracker.
         self.questions: dict[str, Question] = {}
         self.waiting_for_score_feedback: bool = False
-        # quiz statistics
-        self.avg_quiz_questions_count: MovingAverage
-        self.avg_quiz_answers_count: MovingAverage
-        self.avg_quiz_probability_baseline: MovingAverage
+        # Timestamp of the latest quiz processed.
+        self.console_redrawn_at: datetime.datetime = datetime.datetime.min
+        self.plots_rendered_at: datetime.datetime = datetime.datetime.min
+        # self.avg_quiz_questions_count: MovingAverage
+        # self.avg_quiz_answers_count: MovingAverage
+        # self.avg_quiz_probability_baseline: MovingAverage
         # Store the latest quiz as a dictionary of questions.
         self._latest_quiz: list[Question] = []
         self._latest_response: list[Question] = []
@@ -42,42 +47,44 @@ class QuizSolver:
             "Beta": StrategyB(quizsolver=self, name="Beta"),
             "NegativeBeta": StrategyB(quizsolver=self, name="NegativeBeta", is_negative=True),
         }
-        self._strategy_in_use: Strategy = self.strategies["NegativeAlpha"]
+        self.determine_strategy()
     
-    def update_quiz_statistics(self, *, quiz: dict):
+    def update_quiz_statistics(self, *, score: float):
         """
-        Update quiz statistics based on the provided quiz data.
-        Computes average number of questions, answers, and probability baseline.
-        Probability baseline is a probable score received after randomly picking
-        an answer for each question.
+        Update quiz statistics based on the latest quiz results.
         Args:
-            quiz (dict): The quiz data containing questions and answers.
+            score (float): The score obtained in the latest quiz.
         """
         # Analyze quiz structure
-        received_raw_questions = quiz.get("questions", [])
-        num_questions = len(received_raw_questions)
-        total_answers = 0
-        total_probability_baseline = 0.0
-        # Process each question to gather statistics
-        for received_raw_question in received_raw_questions:
-            raw_answers = received_raw_question.get("answers", [])
-            num_answers = len(raw_answers)
-            total_answers += num_answers
-            # Assuming uniform probability baseline
-            if num_answers > 0:
-                total_probability_baseline += 1.0 / num_answers
-        avg_answers = total_answers / num_questions if num_questions > 0 else 0
-        avg_probability_baseline = total_probability_baseline / num_questions if num_questions > 0 else 0.0
-        # Update moving averages
-        if not hasattr(self, 'avg_quiz_questions_count'):
-            self.avg_quiz_questions_count = MovingAverage(initial_value=num_questions, window_size=100)
-        if not hasattr(self, 'avg_quiz_answers_count'):
-            self.avg_quiz_answers_count = MovingAverage(initial_value=avg_answers, window_size=100)
-        if not hasattr(self, 'avg_quiz_probability_baseline'):
-            self.avg_quiz_probability_baseline = MovingAverage(initial_value=avg_probability_baseline, window_size=100)
-        self.avg_quiz_questions_count.add_value(num_questions)
-        self.avg_quiz_answers_count.add_value(avg_answers)
-        self.avg_quiz_probability_baseline.add_value(avg_probability_baseline)
+        statistics = self.statistics
+        # Calculate total number of questions and answers
+        questions_total = len(self.questions)
+        if questions_total != statistics["questions_total"]:
+            answers_total = sum(len(q.answers) for q in self.questions.values())
+        else:
+            answers_total = statistics["answers_total"]
+        len_questions_in_latest_quiz = len(self._latest_quiz)
+        len_answers_in_latest_quiz = sum(len(q.answers) for q in self._latest_quiz)
+        # Update finished_at if needed
+        if self.epoch >= self.setup.max_epochs or self.are_all_questions_solved:
+            statistics["finished_at"] = datetime.datetime.now()
+        # Update epoch
+        statistics["epochs"] = self.epoch + 1
+        # Update min score
+        if statistics["min_score"] is None or score < statistics["min_score"]:
+            statistics["min_score"] = score
+            statistics["min_score_epoch"] = self.epoch
+        # Update max score
+        if statistics["max_score"] is None or score > statistics["max_score"]:        
+            statistics["max_score"] = score
+            statistics["max_score_epoch"] = self.epoch
+        # Update questions and answers counts
+        statistics["questions_total"] = questions_total
+        statistics["answers_total"] = answers_total
+        statistics["sum_of_all_questions_of_all_quizzes"] += len_questions_in_latest_quiz
+        statistics["sum_of_all_answers_of_all_quizzes"] += len_answers_in_latest_quiz
+        statistics["questions_per_quiz_on_average"] = statistics["sum_of_all_questions_of_all_quizzes"] / (self.epoch + 1)
+        statistics["answers_per_quiz_on_average"] = statistics["sum_of_all_answers_of_all_quizzes"] / (self.epoch + 1)      
 
     def give_answer(self, *, quiz_question: dict) -> dict:
         """
@@ -109,8 +116,8 @@ class QuizSolver:
             int: The calculated window size.
         """
         # If a fixed window size is set in the setup, use it
-        if self.quiz_setup.moving_average_window_size_override is not None:
-            return self.quiz_setup.moving_average_window_size_override
+        if self.setup.moving_average_window_size_override is not None:
+            return self.setup.moving_average_window_size_override
         # Dynamic calculation based on quiz statistics
         result = 0
         coefficient = (len(self._latest_quiz) / len(self.questions))
@@ -134,7 +141,50 @@ class QuizSolver:
         for question in self.questions.values():
             if not question.is_solved:
                 return False
-        return True     
+        return True
+
+    def determine_strategy(self):
+        """
+        Determine the strategy to use for the next quiz.
+        """
+        # If a preferred strategy is set in the setup, use it
+        if self.setup.preferred_strategy is not None:
+            strategy_name = self.setup.preferred_strategy
+            strategy_name_lower = strategy_name.lower()
+            if strategy_name_lower != "alpha" and strategy_name_lower != "negativealpha" and \
+               strategy_name_lower != "beta" and strategy_name_lower != "negativebeta":
+                raise ValueError(f"Invalid preferred strategy: {self.setup.preferred_strategy}. "
+                                 f"Must be one of: Alpha, NegativeAlpha, Beta, NegativeBeta.")
+            # Set the strategy in use
+            self._strategy_in_use = self.strategies[strategy_name]
+            return
+        # if all questions are solved, use the alpha strategy to solve the quiz
+        if self.are_all_questions_solved:
+            # If all questions are solved, use the Winner strategy
+            self._strategy_in_use = self.strategies["Alpha"]
+            return
+        # Get the number of questions
+        len_questions = len(self.questions)
+        len_questions_in_latest_quiz = len(self._latest_quiz)
+        if len_questions == 0:
+                # If no questions yet, use Alpha strategy
+                self._strategy_in_use = self.strategies["Alpha"]
+                return
+        quiz_questions_ratio = len_questions_in_latest_quiz / len_questions
+        # Otherwise, choose the strategy based on performance
+        # If user wants to obtain 100% score choose negative strategies first
+        if self.setup.targeted_score >= 1:
+            if quiz_questions_ratio > 0.9:
+                self._strategy_in_use = self.strategies["NegativeBeta"]
+            else:
+                self._strategy_in_use = self.strategies["NegativeAlpha"]
+        else:
+            if quiz_questions_ratio > 0.9:
+                self._strategy_in_use = self.strategies["Beta"]
+            else:
+                self._strategy_in_use = self.strategies["Alpha"]
+            
+        
     
     def process_score_feedback(self, *, score: float, max_score: float) -> dict:
         # Update moving average with the new score
@@ -157,27 +207,32 @@ class QuizSolver:
 
         result = {
             "epoch": self.epoch + 1,
-            "max_epochs_reached": self.epoch >= self.quiz_setup.max_epochs,
             "strategy_in_use": self._strategy_in_use.name,
             "score": score,
-            "max_score": max_score,
-            "total_questions": len(self.questions),
-            #"quiz_questions_count_moving_average": self.avg_quiz_questions_count.moving_average,
-            #"quiz_answers_count_moving_average": self.avg_quiz_answers_count.moving_average,
-            #"quiz_probability_baseline_moving_average": self.avg_quiz_probability_baseline.moving_average,
+            "max_epochs_reached": self.epoch >= self.setup.max_epochs,
+            "targeted_score_reached": score >= self.setup.targeted_score,
             "all_questions_solved": self.are_all_questions_solved,
-            "finished": self.epoch >= self.quiz_setup.max_epochs or self.are_all_questions_solved
+            "finished": self.epoch >= self.setup.max_epochs or self.are_all_questions_solved or
+                        score >= self.setup.targeted_score
         }
+        # return the result dictionary
+        self.latest_result = result
+        # Update quiz statistics
+        self.update_quiz_statistics(score=score)
+        # Determine the strategy to use for the next quiz
+        self.determine_strategy()
+        # Handle console redraw and plot rendering based on intervals
+        now = datetime.datetime.now()
+        if now - self.console_redrawn_at > datetime.timedelta(seconds=self.setup["redraw_console_interval"]) and self.setup["redraw_console_interval"] >= 0:
+            self.print_statistics()
+            self.console_redrawn_at = now
+        if now - self.plots_rendered_at > datetime.timedelta(seconds=self.setup["render_plots_interval"]) and self.setup["render_plots_interval"] >= 0:
+            if self.epoch > 1:
+                self._strategy_in_use.plot()
+            self.plots_rendered_at = now
         # Update epoch
         self.epoch += 1
         self._latest_quiz = []
-        # if False and self.epoch % 2 == 0:
-        #     self._strategy_in_use = self.strategies["Alpha"]
-        # else:
-        #     self._strategy_in_use = self.strategies["NegativeAlpha"]
-        # return the result dictionary
-        self.latest_result = result
-        self.print_statistics()
         return result
 
     def print_statistics(self):
@@ -186,9 +241,13 @@ class QuizSolver:
         """
         result = "QuizSolver Statistics:\n"
         result +=f"  Epoch: {self.latest_result["epoch"]}\n"
-        result += f"  Total Questions: {self.latest_result["total_questions"]}\n"
-        result += f"  Latest Score %: {(self.latest_result["score"]/self.latest_result["max_score"]) * 100:.3f}% " \
-                  f"({self.latest_result["score"]:.5f} / {self.latest_result["max_score"]:.5f})\n"
+        result += f"  Total Questions / Answers: {self.statistics["questions_total"]} / {self.statistics["answers_total"]}\n"
+        result += f"  Avg Questions / Answers per Quiz: {self.statistics["questions_per_quiz_on_average"]:.3f} / " \
+                  f"{self.statistics["answers_per_quiz_on_average"]:.3f}\n"
+        result += f"  Latest Score %: {(self.latest_result["score"]) * 100:.3f}% " \
+                  f"({self.latest_result["score"]:.5f})\n"
+        result += f"  Score Min/Max: {self.statistics["min_score"]:.5f} (Epoch {self.statistics["min_score_epoch"]}) / " \
+                  f"{self.statistics["max_score"]:.5f} (Epoch {self.statistics["max_score_epoch"]})\n"
         result += f"  All Questions Solved: {self.latest_result["all_questions_solved"]}\n\n"
         result += self.strategies["Winner"].print_statistics()+"\n"
         result += self.strategies["Looser"].print_statistics()+"\n"

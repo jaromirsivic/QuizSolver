@@ -311,8 +311,8 @@ class StrategyB(Strategy):
         Update the moving average window size based on the current epoch.
         """
         epoch = self._quizsolver.epoch
-        if self._quizsolver.quiz_setup.moving_average_window_size_override is not None:
-            window_size = self._quizsolver.quiz_setup.moving_average_window_size_override
+        if self._quizsolver.setup.moving_average_window_size_override is not None:
+            window_size = self._quizsolver.setup.moving_average_window_size_override
         else:
             window_size = 7
         if (epoch & (epoch - 1)) == 0 and \
@@ -495,11 +495,12 @@ class StrategyB(Strategy):
         """
         rows = 5
         cols = 1
-        answers_per_row = 200
+        answers_per_row = 400
+        # Calculate maximum answers to plot
         max_answers = rows * answers_per_row
         # Initialize figure and axes if not already done
         if not self.figure_initialized:
-            self.figure, self.axes = plt.subplots(rows, cols, figsize=(14, 9))
+            self.figure, self.axes = plt.subplots(rows, cols, figsize=(13, 5.5))
             self.figure_initialized = True
             # initialize axes data
             for row in range(rows):
@@ -514,8 +515,8 @@ class StrategyB(Strategy):
                                f'Med1: {self._ma1.moving_average:.4f}, '
                                f'Med2: {self._ma2.moving_average:.4f}')
         self.axes[0].plot(self._ma0.history_of_moving_averages, label='MA0 Moving Average', color='blue')
-        self.axes[0].plot(self._ma1.history_of_medians, label='MA1 Median', color='cyan')
-        self.axes[0].plot(self._ma2.history_of_medians, label='MA2 Median', color='orange')
+        # self.axes[0].plot(self._ma1.history_of_medians, label='MA1 Median', color='cyan')
+        # self.axes[0].plot(self._ma2.history_of_medians, label='MA2 Median', color='orange')
         self.axes[0].legend()
         
         # Clear and update other subplots
@@ -527,10 +528,12 @@ class StrategyB(Strategy):
         answers_count = 0
         questions = list(self._quizsolver.questions.values())
         for question in questions:
+            # If the limit of answers is reached, break
             if answers_count >= max_answers:
                 break
             is_in_training_group = question in self.training_minibatch
             for answer in question.answers:
+                # If the limit of answers is reached, break
                 if answers_count >= max_answers:
                     break
                 if answer.data[self.name]["counter1"] > 0:
@@ -543,7 +546,7 @@ class StrategyB(Strategy):
                     colors.append('lightgray')
                     answers.append(0.5)
             # increment answers count
-            answers_count += len(question.answers) + 2
+            answers_count += len(question.answers) + 4
             colors.append('lightgray')
             colors.append('lightgray')
             colors.append('lightgray')
@@ -564,47 +567,10 @@ class StrategyB(Strategy):
             end_index = start_index + answers_per_row
             data = answers[start_index:end_index]
             color_data = colors[start_index:end_index]
+            self.axes[i].xaxis.set_visible(False)
             self.axes[i].bar(range(len(data)), data, color=color_data, alpha=0.7)
 
-
-        # questions = list(self._quizsolver.questions.values())
-        # x = list(range(len(questions)))
-        # colors = ['blue' if question in self.training_group else 'black' for question in questions]
-        # for i in range(1, 5):
-        #     self.axes[i].clear()
-        #     #self.axes[i].set_title(f'Probabilities of Answer {i}')
-        #     probabilities = []
-        #     for question in questions:
-        #         if question.most_probable_answer_index == i - 1:
-        #             probabilities.append(question.most_probable_answer.probability)
-        #         else:
-        #             probabilities.append(0.0)
-        #     self.axes[i].bar(x, probabilities, color=colors, alpha=0.7)
-        plt.pause(0.1)
-        
-    
-    # def print_statistics(self) -> str:
-    #     """
-    #     Print statistics related to the strategy's performance.
-    #     """
-    #     # return statistics
-    #     factor = self.latest_score / self.latest_max_score if self.latest_max_score > 0 else 0.0
-    #     window_size = self._ma0.window_size if self._ma0 else 0
-    #     moving_average = self._ma0.moving_average if self._ma0 else 0.0
-    #     result = f"Strategy {self.name}:\n"
-    #     result += f"  Enabled: {self.enabled}\n"
-    #     result += f"  Epochs used: {self.epochs_used}\n"
-    #     result += f"  Finished Measurements: {self.finished_measurements}\n"
-    #     result += f"  MA Window Size: {window_size}\n"
-    #     result += f"  Moving Average: {moving_average * 100:,.3f}%\n"
-    #     result += f"  Latest Score% : {(self.latest_score/self.latest_max_score) * 100:.3f}% " \
-    #               f"({self.latest_score:.5f} / {self.latest_max_score:.5f})\n"
-    #     # draw progress bar
-    #     bar_length = 50
-    #     factor2 = factor
-    #     bar_used = int(factor2 * bar_length)
-    #     result += f"[" + "#" * bar_used + "-" * (bar_length - bar_used) + "]\n"
-    #     return result
+        plt.pause(0.01)
     
     def print_statistics(self) -> str:
         """

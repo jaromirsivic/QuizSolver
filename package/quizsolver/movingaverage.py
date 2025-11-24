@@ -36,8 +36,13 @@ class MovingAverage:
         self.values_weights[self.index] = value_weight
         self.index = (self.index + 1) % self.max_window_size
         # Record history
-        # self.history_of_moving_averages.append(self.moving_average)
-        # self.history_of_medians.append(self.median)
+        len_history_of_moving_averages = len(self.history_of_moving_averages)
+        if len_history_of_moving_averages < self.max_window_size:
+            self.history_of_moving_averages.append(self.moving_average)
+            self.history_of_medians.append(self.median)
+        else:
+            self.history_of_moving_averages[len_history_of_moving_averages % self.max_window_size] = self.moving_average
+            self.history_of_medians[len_history_of_moving_averages % self.max_window_size] = self.median
 
     def reset(self):
         """
